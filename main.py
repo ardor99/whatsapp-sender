@@ -1,5 +1,6 @@
 import openpyxl
 import re
+import pyperclip
 import tkinter as tk
 from tkinter import filedialog, ttk
 import threading
@@ -14,7 +15,7 @@ import time
 from selenium.webdriver.chrome.options import Options
 import os
 import shutil
-from PIL import ImageGrab
+from PIL import ImageGrab, Image
 from datetime import datetime
 
 class WhatsAppAutomation:
@@ -22,8 +23,8 @@ class WhatsAppAutomation:
     def __init__(self, root):
         self.root = root
         self.root.title("WhatsApp Automation")
-        self.root.geometry("600x500")  # Adjust window size
-        self.root.resizable(True, True)  # Allow resizing
+        self.root.geometry("600x500")
+        self.root.resizable(True, True)
 
         self.init_gui()
 
@@ -51,8 +52,8 @@ class WhatsAppAutomation:
         btn_choose_file = tk.Button(main_frame, text="Choose Excel File", command=self.choose_file, padx=10, pady=5)
         btn_choose_file.pack(pady=5)
 
-        self.chosen_language = tk.StringVar(value="en")  
-        self.send_mode = tk.StringVar(value="message")  
+        self.chosen_language = tk.StringVar(value="en")
+        self.send_mode = tk.StringVar(value="message")
 
         lang_frame = tk.Frame(main_frame)
         lang_frame.pack(pady=5)
@@ -70,7 +71,7 @@ class WhatsAppAutomation:
 
         self.btn_choose_photo = tk.Button(main_frame, text="Choose Photo", command=self.choose_photo, padx=10, pady=5)
         self.btn_choose_photo.pack(pady=5)
-        self.btn_choose_photo.pack_forget()  
+        self.btn_choose_photo.pack_forget()
 
         btn_send = tk.Button(main_frame, text="Send", command=lambda: threading.Thread(target=self.send_messages).start(), padx=10, pady=5, bg="green", fg="white")
         btn_send.pack(pady=5)
@@ -114,15 +115,16 @@ class WhatsAppAutomation:
         if self.photo_path:
             target_path = os.path.join(os.getcwd(), os.path.basename(self.photo_path))
             shutil.copy(self.photo_path, target_path)
-            self.photo_path = target_path  
+            self.photo_path = target_path
             self.update_text_area(f"Photo chosen: {self.photo_path}")
         else:
             self.update_info_var("No photo chosen.")
             self.update_text_area("No photo chosen.")
 
     def copy_image_to_clipboard(self, image_path):
-        image = ImageGrab.grab(image_path)
-        image.show()  # Copies the image to clipboard
+        image = Image.open(image_path)
+        output = ImageGrab.grab(image_path)
+        output.show()
 
     def update_progress(self, value):
         self.progress["value"] = value
@@ -131,6 +133,17 @@ class WhatsAppAutomation:
     def update_text_area(self, message):
         self.text_area.insert(tk.END, message + "\n")
         self.text_area.see(tk.END)
+        with open("log.txt", "a") as log_file:
+            log_file.write(f"{time.ctime()}: {message}\n")
+
+    def _safe_update_text_area(self, message):
+        self.root.after(0, lambda: self.update_text_area(message))
+
+    def update_info_var(self, message):
+        self.root.after(0, self._safe_update_info_var, message)
+
+    def _safe_update_info_var(self, message):
+        self.info_var.set(message)
 
     def set_webdriver_path(self):
         self.webdriver_path = filedialog.askopenfilename(title="Select WebDriver", filetypes=[("Executable files", "*.exe"), ("All files", "*.*")])
@@ -154,7 +167,7 @@ class WhatsAppAutomation:
         try:
             service = webdriver.chrome.service.Service(self.webdriver_path)
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
-            self.wait = WebDriverWait(self.driver, 10)  
+            self.wait = WebDriverWait(self.driver, 10)
         except WebDriverException as e:
             self.update_info_var(f"Failed to launch WebDriver: {str(e)}")
             self.update_text_area(f"Error launching WebDriver: {str(e)}")
@@ -195,14 +208,13 @@ class WhatsAppAutomation:
         try:
             wb = openpyxl.load_workbook(self.filepath)
             sheet = wb.active
-
             wb_sent = openpyxl.Workbook()
             sheet_sent = wb_sent.active
             sheet_sent.append(["Phone Number", "Message", "Status"])
 
             unsent_row = 2
-            total_rows = sheet.max_row - 1  
-            start_time = datetime.now()  
+            total_rows = sheet.max_row - 1
+            start_time = datetime.now()
 
             for idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=1):
                 if self.stop_thread:
@@ -246,7 +258,7 @@ class WhatsAppAutomation:
                         message_box.send_keys(Keys.ENTER)
                     else:
                         if self.photo_path:
-                            self.copy_image_to_clipboard(self.photo_path)  # Copy the image itself to clipboard
+                            self.copy_image_to_clipboard(self.photo_path)
                             message_box.send_keys(Keys.CONTROL, 'v')
                             message_box.send_keys(Keys.ENTER)
                         else:
@@ -263,7 +275,7 @@ class WhatsAppAutomation:
                     self.update_info_var(f"Error for {phone_number}")
                     self.update_text_area(error_msg)
 
-                time.sleep(2)  
+                time.sleep(2)
 
                 progress_value = (idx / total_rows) * 100
                 self.update_progress(progress_value)
@@ -297,13 +309,13 @@ class WhatsAppAutomation:
             return "Not Sent"
 
         icons = [
-            ("//span[@data-icon='msg-check']", "Sent"),  
-            ("//span[@data-icon='msg-dblcheck']", "Delivered"),  
-            ("//span[@data-icon='msg-dblcheck-ack']", "Read")  
+            ("//span[@data-icon='msg-check']", "Sent"),
+            ("//span[@data-icon='msg-dblcheck']", "Delivered"),
+            ("//span[@data-icon='msg-dblcheck-ack']", "Read")
         ]
 
         retries = 0
-        while retries < 5:  
+        while retries < 5:
             for icon, state in icons:
                 try:
                     self.wait.until(EC.presence_of_element_located((By.XPATH, icon)))
