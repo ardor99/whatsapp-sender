@@ -14,8 +14,6 @@ from selenium.webdriver.common.keys import Keys
 import time
 from selenium.webdriver.chrome.options import Options
 import os
-from datetime import datetime, timedelta
-
 
 class WhatsAppAutomation:
 
@@ -32,7 +30,6 @@ class WhatsAppAutomation:
         self.filepath = ''
         self.webdriver_path = ''
         self.stop_thread = False
-        self.pause_thread = False
 
     def init_gui(self):
         # Main Frame for Padding
@@ -68,10 +65,6 @@ class WhatsAppAutomation:
         btn_send = tk.Button(main_frame, text="Send", command=lambda: threading.Thread(target=self.send_messages).start(), padx=10, pady=5, bg="green", fg="white")
         btn_send.pack(pady=5)
 
-        # Pause Button
-        btn_pause = tk.Button(main_frame, text="Pause", command=self.pause_messages, padx=10, pady=5, bg="orange", fg="white")
-        btn_pause.pack(pady=5)
-
         # Stop Button
         btn_stop = tk.Button(main_frame, text="Stop", command=self.stop_messages, padx=10, pady=5, bg="red", fg="white")
         btn_stop.pack(pady=5)
@@ -96,12 +89,6 @@ class WhatsAppAutomation:
         self.progress = ttk.Progressbar(main_frame, orient="horizontal", mode="determinate", length=500)
         self.progress.pack(pady=10)
 
-        # Time Remaining Label
-        self.time_var = tk.StringVar()
-        self.time_var.set("Estimated Time Remaining: --:--")
-        lbl_time = tk.Label(main_frame, textvariable=self.time_var, pady=10, font=("Arial", 12))
-        lbl_time.pack()
-
     def update_progress(self, value):
         self.progress["value"] = value
         self.root.update_idletasks()  # Ensure progress bar updates in real-time
@@ -110,12 +97,13 @@ class WhatsAppAutomation:
         """ Update the text area and log to file. """
         self.text_area.insert(tk.END, message + "\n")
         self.text_area.see(tk.END)
-        with open("log.txt", "a") as log_file:
-            log_file.write(f"{time.ctime()}: {message}\n")
 
     def _safe_update_text_area(self, message):
         """ Safely update the text area in the main thread. """
-        self.root.after(0, lambda: self.update_text_area(message))
+        self.text_area.insert(tk.END, message + "\n")
+        self.text_area.see(tk.END)
+        with open("log.txt", "a") as log_file:
+            log_file.write(f"{time.ctime()}: {message}\n")
 
     def update_info_var(self, message):
         """ Thread-safe update to info_var. """
@@ -128,10 +116,10 @@ class WhatsAppAutomation:
     def set_webdriver_path(self):
         self.webdriver_path = filedialog.askopenfilename(title="Select WebDriver", filetypes=[("Executable files", "*.exe"), ("All files", "*.*")])
         if self.webdriver_path and os.path.isfile(self.webdriver_path):
-            self.update_info_var(f"WebDriver set to: {self.webdriver_path}")
+            self.info_var.set(f"WebDriver set to: {self.webdriver_path}")
             self.update_text_area(f"WebDriver set to: {self.webdriver_path}")
         else:
-            self.update_info_var("Invalid WebDriver path!")
+            self.info_var.set("Invalid WebDriver path!")
             self.update_text_area("Invalid WebDriver path!")
 
     def login(self):
@@ -164,15 +152,14 @@ class WhatsAppAutomation:
     def choose_file(self):
         self.filepath = filedialog.askopenfilename(title="Select Excel File", filetypes=[("Excel files", "*.xlsx")])
         if self.filepath:
-            self.update_info_var(f"File chosen: {self.filepath}")
+            self.info_var.set(f"File chosen: {self.filepath}")
             self.update_text_area(f"Chosen Excel File: {self.filepath}")
         else:
-            self.update_info_var("No file chosen.")
+            self.info_var.set("No file chosen.")
             self.update_text_area("No file chosen.")
 
     def send_messages(self):
         self.stop_thread = False
-        self.pause_thread = False
 
         if not self.driver:
             self.update_info_var("Please login first!")
@@ -194,18 +181,18 @@ class WhatsAppAutomation:
             sheet_sent = wb_sent.active
             sheet_sent.append(["Phone Number", "Message", "Status"])
 
+            wb_unsent = openpyxl.Workbook()
+            sheet_unsent = wb_unsent.active
+            for row in sheet.iter_rows(values_only=True):
+                sheet_unsent.append(row)
+
             unsent_row = 2
             total_rows = sheet.max_row - 1  # Total messages to be sent
-            start_time = datetime.now()
 
             for idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=1):
                 if self.stop_thread:
                     self.update_text_area("Stopping the message sending process...")
                     break
-
-                while self.pause_thread:
-                    self.update_info_var("Status: Paused. Click Resume to continue.")
-                    time.sleep(1)
 
                 phone_number, message = row
                 phone_number = str(phone_number)
@@ -232,6 +219,7 @@ class WhatsAppAutomation:
 
                     if not message_box:
                         self.update_text_area(f"Failed to find message box for {phone_number} after retries.")
+                        # Ensure unsent messages stay in the unsent sheet
                         unsent_row += 1
                         continue
 
@@ -243,6 +231,7 @@ class WhatsAppAutomation:
                     status = self.check_message_status()
                     sheet_sent.append([phone_number, message, status])
                     self.update_text_area(f"Message to {phone_number} {status}.")
+                    sheet_unsent.delete_rows(unsent_row)
 
                 except (NoSuchElementException, TimeoutException, WebDriverException) as e:
                     error_msg = f"Error for {phone_number}: {str(e)}"
@@ -256,13 +245,8 @@ class WhatsAppAutomation:
                 progress_value = (idx / total_rows) * 100
                 self.update_progress(progress_value)
 
-                # Calculate and update estimated time remaining
-                elapsed_time = datetime.now() - start_time
-                estimated_total_time = (elapsed_time / idx) * total_rows
-                remaining_time = estimated_total_time - elapsed_time
-                self.time_var.set(f"Estimated Time Remaining: {str(remaining_time).split('.')[0]}")
-
                 wb_sent.save("sent_messages.xlsx")
+                wb_unsent.save("unsent_messages.xlsx")
 
         except Exception as e:
             self.update_info_var(f"Error: {str(e)}")
@@ -273,28 +257,31 @@ class WhatsAppAutomation:
             self.update_text_area("Finished sending messages.")
 
     def check_message_status(self):
-        # Step 1: Check if the message is in the 'pending' (clock) state (msg-time)
+    #"""Check the message status by looking for WhatsApp icons."""
+    
+    # Step 1: Check if the message is in the 'pending' (clock) state (msg-time)
         try:
             self.wait.until(EC.presence_of_element_located((By.XPATH, "//span[@data-icon='msg-time']")))
             self.update_text_area("Message is pending (msg-time). Waiting for final status...")
         except TimeoutException:
             pass  # Message is not pending; move on to check final status
-
+        
         # Step 2: Wait for the msg-time icon to disappear (indicating the message has been sent)
         try:
             self.wait.until_not(EC.presence_of_element_located((By.XPATH, "//span[@data-icon='msg-time']")))
             self.update_text_area("Message is no longer pending (msg-time disappeared). Checking final status...")
         except TimeoutException:
+            # If msg-time never disappears, return "Not Sent"
             self.update_text_area("Message remained in pending state for too long. Assuming not sent.")
             return "Not Sent"
-
+        
         # Step 3: Check for final status (Sent, Delivered, Read)
         icons = [
             ("//span[@data-icon='msg-check']", "Sent"),  # Single check mark
             ("//span[@data-icon='msg-dblcheck']", "Delivered"),  # Double check mark (gray)
             ("//span[@data-icon='msg-dblcheck-ack']", "Read")  # Blue double check marks
         ]
-
+        
         retries = 0
         while retries < 5:  # Retry up to 5 times to catch a final status
             for icon, state in icons:
@@ -312,12 +299,6 @@ class WhatsAppAutomation:
         self.update_text_area("No final status found after retries. Returning 'Not Sent'.")
         return "Not Sent"
 
-    def pause_messages(self):
-        self.pause_thread = not self.pause_thread
-        if self.pause_thread:
-            self.update_info_var("Paused...")
-        else:
-            self.update_info_var("Resuming...")
 
     def stop_messages(self):
         self.stop_thread = True
