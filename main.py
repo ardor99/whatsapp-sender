@@ -208,6 +208,7 @@ class WhatsAppAutomation:
 
     def send_messages(self):
         self.stop_thread = False
+        self.pause_thread = False
 
         if not self.driver:
             self.update_info_var("Please login first!")
@@ -224,7 +225,11 @@ class WhatsAppAutomation:
         try:
             wb = openpyxl.load_workbook(self.filepath)
             sheet = wb.active
+            wb_sent = openpyxl.Workbook()
+            sheet_sent = wb_sent.active
+            sheet_sent.append(["Phone Number", "Message", "Status"])
 
+            unsent_row = 2
             total_rows = sheet.max_row - 1  # Total messages to be sent
             start_time = datetime.now()  # Start time for calculating remaining time
 
@@ -232,9 +237,12 @@ class WhatsAppAutomation:
                 if self.stop_thread:
                     self.update_text_area("Stopping the message sending process...")
                     break
-
+                while self.pause_thread:
+                    self.update_info_var("Status: Paused. Click Resume to continue.")
+                    time.sleep(1)
                 phone_number, message = row
                 phone_number = str(phone_number)
+                message = str(message)
 
                 try:
                     self.driver.get(f"https://web.whatsapp.com/send?phone={phone_number}")
@@ -257,6 +265,8 @@ class WhatsAppAutomation:
 
                     if not message_box:
                         self.update_text_area(f"Failed to find message box for {phone_number} after retries.")
+                        unsent_row += 1
+
                         continue
 
                     if self.send_mode.get() == "message":
@@ -278,12 +288,14 @@ class WhatsAppAutomation:
 
                     # Check status (sent, delivered, read)
                     status = self.check_message_status()
+                    sheet_sent.append([phone_number, message, status])
                     self.update_text_area(f"Message/photo to {phone_number} {status}.")
 
                 except (NoSuchElementException, TimeoutException, WebDriverException) as e:
                     error_msg = f"Error for {phone_number}: {str(e)}"
                     self.update_info_var(f"Error for {phone_number}")
                     self.update_text_area(error_msg)
+                    unsent_row += 1
 
                 time.sleep(2)  # Small delay between messages
 
@@ -296,6 +308,7 @@ class WhatsAppAutomation:
                 estimated_total_time = (elapsed_time / idx) * total_rows
                 remaining_time = estimated_total_time - elapsed_time
                 self.time_var.set(f"Estimated Time Remaining: {str(remaining_time).split('.')[0]}")
+                wb_sent.save("sent_messages.xlsx")
 
         except Exception as e:
             self.update_info_var(f"Error: {str(e)}")
