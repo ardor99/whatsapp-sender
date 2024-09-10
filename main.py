@@ -14,6 +14,7 @@ from selenium.webdriver.common.keys import Keys
 import time
 from selenium.webdriver.chrome.options import Options
 import os
+import shutil
 from datetime import datetime, timedelta
 
 
@@ -22,7 +23,7 @@ class WhatsAppAutomation:
     def __init__(self, root):
         self.root = root
         self.root.title("WhatsApp Automation")
-        self.root.geometry("600x400")  # Adjust window size
+        self.root.geometry("600x500")  # Adjust window size
         self.root.resizable(True, True)  # Allow resizing
 
         self.init_gui()
@@ -31,6 +32,7 @@ class WhatsAppAutomation:
         self.wait = None
         self.filepath = ''
         self.webdriver_path = ''
+        self.photo_path = ''
         self.stop_thread = False
         self.pause_thread = False
 
@@ -52,17 +54,31 @@ class WhatsAppAutomation:
         btn_login.pack(pady=5)
 
         # Choose File Button
-        btn_choose_file = tk.Button(main_frame, text="Choose File", command=self.choose_file, padx=10, pady=5)
+        btn_choose_file = tk.Button(main_frame, text="Choose Excel File", command=self.choose_file, padx=10, pady=5)
         btn_choose_file.pack(pady=5)
 
-        # Language Radio Buttons
+        # Radio Buttons for Language and Send Mode
         self.chosen_language = tk.StringVar(value="en")  # default to English
+        self.send_mode = tk.StringVar(value="message")  # default to sending message
         lang_frame = tk.Frame(main_frame)
         lang_frame.pack(pady=5)
         lang_en = tk.Radiobutton(lang_frame, text="English", variable=self.chosen_language, value="en")
         lang_ar = tk.Radiobutton(lang_frame, text="Arabic", variable=self.chosen_language, value="ar")
         lang_en.pack(side="left", padx=5)
         lang_ar.pack(side="right", padx=5)
+
+        # Radio Buttons for Sending Mode (Message/Photo)
+        mode_frame = tk.Frame(main_frame)
+        mode_frame.pack(pady=5)
+        mode_message = tk.Radiobutton(mode_frame, text="Send Message", variable=self.send_mode, value="message", command=self.toggle_photo_options)
+        mode_photo = tk.Radiobutton(mode_frame, text="Send Photo", variable=self.send_mode, value="photo", command=self.toggle_photo_options)
+        mode_message.pack(side="left", padx=5)
+        mode_photo.pack(side="right", padx=5)
+
+        # Photo selection (Initially hidden)
+        self.btn_choose_photo = tk.Button(main_frame, text="Choose Photo", command=self.choose_photo, padx=10, pady=5)
+        self.btn_choose_photo.pack(pady=5)
+        self.btn_choose_photo.pack_forget()  # Hide the button initially
 
         # Send Button
         btn_send = tk.Button(main_frame, text="Send", command=lambda: threading.Thread(target=self.send_messages).start(), padx=10, pady=5, bg="green", fg="white")
@@ -101,6 +117,26 @@ class WhatsAppAutomation:
         self.time_var.set("Estimated Time Remaining: --:--")
         lbl_time = tk.Label(main_frame, textvariable=self.time_var, pady=10, font=("Arial", 12))
         lbl_time.pack()
+
+    def toggle_photo_options(self):
+        """ Show or hide photo selection based on send mode (message or photo). """
+        if self.send_mode.get() == "photo":
+            self.btn_choose_photo.pack(pady=5)
+        else:
+            self.btn_choose_photo.pack_forget()
+
+    def choose_photo(self):
+        """ Let the user select a photo and copy it to the program's directory. """
+        self.photo_path = filedialog.askopenfilename(title="Select Photo", filetypes=[("Image files", "*.jpg;*.jpeg;*.png"), ("All files", "*.*")])
+        if self.photo_path:
+            # Copy the selected photo to the same directory as the script
+            target_path = os.path.join(os.getcwd(), os.path.basename(self.photo_path))
+            shutil.copy(self.photo_path, target_path)
+            self.photo_path = target_path  # Update photo path to the new location
+            self.update_text_area(f"Photo chosen: {self.photo_path}")
+        else:
+            self.update_info_var("No photo chosen.")
+            self.update_text_area("No photo chosen.")
 
     def update_progress(self, value):
         self.progress["value"] = value
@@ -172,7 +208,6 @@ class WhatsAppAutomation:
 
     def send_messages(self):
         self.stop_thread = False
-        self.pause_thread = False
 
         if not self.driver:
             self.update_info_var("Please login first!")
@@ -190,30 +225,20 @@ class WhatsAppAutomation:
             wb = openpyxl.load_workbook(self.filepath)
             sheet = wb.active
 
-            wb_sent = openpyxl.Workbook()
-            sheet_sent = wb_sent.active
-            sheet_sent.append(["Phone Number", "Message", "Status"])
-
-            unsent_row = 2
             total_rows = sheet.max_row - 1  # Total messages to be sent
-            start_time = datetime.now()
+            start_time = datetime.now()  # Start time for calculating remaining time
 
             for idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=1):
                 if self.stop_thread:
                     self.update_text_area("Stopping the message sending process...")
                     break
 
-                while self.pause_thread:
-                    self.update_info_var("Status: Paused. Click Resume to continue.")
-                    time.sleep(1)
-
                 phone_number, message = row
                 phone_number = str(phone_number)
-                message = str(message)
 
                 try:
                     self.driver.get(f"https://web.whatsapp.com/send?phone={phone_number}")
-                    self.update_text_area(f"Attempting to send message to {phone_number}...")
+                    self.update_text_area(f"Attempting to send to {phone_number}...")
 
                     retries = 0
                     message_box = None
@@ -232,23 +257,33 @@ class WhatsAppAutomation:
 
                     if not message_box:
                         self.update_text_area(f"Failed to find message box for {phone_number} after retries.")
-                        unsent_row += 1
                         continue
 
-                    cleaned_message = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\xff]', '', message)
-                    pyperclip.copy(cleaned_message)
-                    message_box.send_keys(Keys.CONTROL, 'v')
-                    message_box.send_keys(Keys.ENTER)
+                    if self.send_mode.get() == "message":
+                        # Send message
+                        cleaned_message = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\xff]', '', message)
+                        pyperclip.copy(cleaned_message)
+                        message_box.send_keys(Keys.CONTROL, 'v')
+                        message_box.send_keys(Keys.ENTER)
+                    else:
+                        # Send photo
+                        if self.photo_path:
+                            pyperclip.copy(self.photo_path)
+                            message_box.send_keys(Keys.CONTROL, 'v')
+                            message_box.send_keys(Keys.ENTER)
+                        else:
+                            self.update_info_var(f"No photo chosen for {phone_number}")
+                            self.update_text_area(f"No photo chosen for {phone_number}")
+                            continue
 
+                    # Check status (sent, delivered, read)
                     status = self.check_message_status()
-                    sheet_sent.append([phone_number, message, status])
-                    self.update_text_area(f"Message to {phone_number} {status}.")
+                    self.update_text_area(f"Message/photo to {phone_number} {status}.")
 
                 except (NoSuchElementException, TimeoutException, WebDriverException) as e:
                     error_msg = f"Error for {phone_number}: {str(e)}"
                     self.update_info_var(f"Error for {phone_number}")
                     self.update_text_area(error_msg)
-                    unsent_row += 1
 
                 time.sleep(2)  # Small delay between messages
 
@@ -261,8 +296,6 @@ class WhatsAppAutomation:
                 estimated_total_time = (elapsed_time / idx) * total_rows
                 remaining_time = estimated_total_time - elapsed_time
                 self.time_var.set(f"Estimated Time Remaining: {str(remaining_time).split('.')[0]}")
-
-                wb_sent.save("sent_messages.xlsx")
 
         except Exception as e:
             self.update_info_var(f"Error: {str(e)}")
