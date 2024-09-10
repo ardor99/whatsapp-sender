@@ -208,7 +208,6 @@ class WhatsAppAutomation:
 
     def send_messages(self):
         self.stop_thread = False
-        self.pause_thread = False
 
         if not self.driver:
             self.update_info_var("Please login first!")
@@ -242,7 +241,6 @@ class WhatsAppAutomation:
                     time.sleep(1)
                 phone_number, message = row
                 phone_number = str(phone_number)
-                message = str(message)
 
                 try:
                     self.driver.get(f"https://web.whatsapp.com/send?phone={phone_number}")
@@ -295,7 +293,6 @@ class WhatsAppAutomation:
                     error_msg = f"Error for {phone_number}: {str(e)}"
                     self.update_info_var(f"Error for {phone_number}")
                     self.update_text_area(error_msg)
-                    unsent_row += 1
 
                 time.sleep(2)  # Small delay between messages
 
