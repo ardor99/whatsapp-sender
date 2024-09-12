@@ -1,3 +1,8 @@
+import platform
+import subprocess
+from PIL import Image
+from io import BytesIO
+import win32clipboard
 import openpyxl
 import re
 import pyperclip
@@ -14,16 +19,17 @@ from selenium.webdriver.common.keys import Keys
 import time
 from selenium.webdriver.chrome.options import Options
 import os
+import shutil
+from PIL import ImageGrab, Image
 from datetime import datetime
-
 
 class WhatsAppAutomation:
 
     def __init__(self, root):
         self.root = root
         self.root.title("WhatsApp Automation")
-        self.root.geometry("600x400")  # Adjust window size
-        self.root.resizable(True, True)  # Allow resizing
+        self.root.geometry("600x500")
+        self.root.resizable(True, True)
 
         self.init_gui()
 
@@ -31,6 +37,7 @@ class WhatsAppAutomation:
         self.wait = None
         self.filepath = ''
         self.webdriver_path = ''
+        self.photo_path = ''
         self.stop_thread = False
         self.pause_thread = False
 
@@ -47,16 +54,29 @@ class WhatsAppAutomation:
         btn_login = tk.Button(main_frame, text="Login", command=self.login, padx=10, pady=5)
         btn_login.pack(pady=5)
 
-        btn_choose_file = tk.Button(main_frame, text="Choose File", command=self.choose_file, padx=10, pady=5)
+        btn_choose_file = tk.Button(main_frame, text="Choose Excel File", command=self.choose_file, padx=10, pady=5)
         btn_choose_file.pack(pady=5)
 
         self.chosen_language = tk.StringVar(value="en")
+        self.send_mode = tk.StringVar(value="message")
+
         lang_frame = tk.Frame(main_frame)
         lang_frame.pack(pady=5)
         lang_en = tk.Radiobutton(lang_frame, text="English", variable=self.chosen_language, value="en")
         lang_ar = tk.Radiobutton(lang_frame, text="Arabic", variable=self.chosen_language, value="ar")
         lang_en.pack(side="left", padx=5)
         lang_ar.pack(side="right", padx=5)
+
+        mode_frame = tk.Frame(main_frame)
+        mode_frame.pack(pady=5)
+        mode_message = tk.Radiobutton(mode_frame, text="Send Message", variable=self.send_mode, value="message", command=self.toggle_photo_options)
+        mode_photo = tk.Radiobutton(mode_frame, text="Send Photo", variable=self.send_mode, value="photo", command=self.toggle_photo_options)
+        mode_message.pack(side="left", padx=5)
+        mode_photo.pack(side="right", padx=5)
+
+        self.btn_choose_photo = tk.Button(main_frame, text="Choose Photo", command=self.choose_photo, padx=10, pady=5)
+        self.btn_choose_photo.pack(pady=5)
+        self.btn_choose_photo.pack_forget()
 
         btn_send = tk.Button(main_frame, text="Send", command=lambda: threading.Thread(target=self.send_messages).start(), padx=10, pady=5, bg="green", fg="white")
         btn_send.pack(pady=5)
@@ -88,6 +108,60 @@ class WhatsAppAutomation:
         self.time_var.set("Estimated Time Remaining: --:--")
         lbl_time = tk.Label(main_frame, textvariable=self.time_var, pady=10, font=("Arial", 12))
         lbl_time.pack()
+
+    def toggle_photo_options(self):
+        if self.send_mode.get() == "photo":
+            self.btn_choose_photo.pack(pady=5)
+        else:
+            self.btn_choose_photo.pack_forget()
+
+    def choose_photo(self):
+        self.photo_path = filedialog.askopenfilename(title="Select Photo", filetypes=[("Image files", "*.jpg;*.jpeg;*.png"), ("All files", "*.*")])
+        if self.photo_path:
+            target_path = os.path.join(os.getcwd(), os.path.basename(self.photo_path))
+            shutil.copy(self.photo_path, target_path)
+            self.photo_path = target_path
+            self.update_text_area(f"Photo chosen: {self.photo_path}")
+        else:
+            self.update_info_var("No photo chosen.")
+            self.update_text_area("No photo chosen.")
+
+    def copy_image_to_clipboard(self, image_path):
+        system_platform = platform.system()
+
+        if system_platform == "Windows":
+            image = Image.open(image_path)
+            output = BytesIO()
+            image.convert("RGB").save(output, "BMP")
+            data = output.getvalue()[14:]  # BMP format expects to skip first 14 bytes
+            output.close()
+
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+            win32clipboard.CloseClipboard()
+
+        elif system_platform == "Linux":
+            image = Image.open(image_path)
+            output = BytesIO()
+            image.save(output, "PNG")
+            output.seek(0)
+
+            process = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', 'image/png'], stdin=subprocess.PIPE)
+            process.communicate(input=output.read())
+
+        elif system_platform == "Darwin":
+            image = Image.open(image_path)
+            output = BytesIO()
+            image.save(output, "PNG")
+            output.seek(0)
+
+            process = subprocess.Popen(['osascript', '-e', 'set the clipboard to (read (POSIX file "{}") as JPEG picture)'.format(image_path)],
+                                    stdin=subprocess.PIPE)
+            process.communicate(input=output.read())
+
+        else:
+            raise NotImplementedError(f"Clipboard copy is not implemented for {system_platform}.")
 
     def update_progress(self, value):
         self.progress["value"] = value
@@ -155,7 +229,6 @@ class WhatsAppAutomation:
 
     def send_messages(self):
         self.stop_thread = False
-        self.pause_thread = False
 
         if not self.driver:
             self.update_info_var("Please login first!")
@@ -172,15 +245,11 @@ class WhatsAppAutomation:
         try:
             wb = openpyxl.load_workbook(self.filepath)
             sheet = wb.active
-
             wb_sent = openpyxl.Workbook()
             sheet_sent = wb_sent.active
             sheet_sent.append(["Phone Number", "Message", "Status"])
 
-            wb_unsent = openpyxl.Workbook()  # Workbook to track unsent messages
-            sheet_unsent = wb_unsent.active
-            sheet_unsent.append(["Phone Number", "Message", "Status"])  # Header for unsent messages
-
+            unsent_row = 2
             total_rows = sheet.max_row - 1
             start_time = datetime.now()
 
@@ -188,7 +257,6 @@ class WhatsAppAutomation:
                 if self.stop_thread:
                     self.update_text_area("Stopping the message sending process...")
                     break
-
                 while self.pause_thread:
                     self.update_info_var("Status: Paused. Click Resume to continue.")
                     time.sleep(1)
@@ -205,9 +273,9 @@ class WhatsAppAutomation:
                     while retries < 3:
                         try:
                             if self.chosen_language.get() == "en":
-                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-label='Type a message']")))
+                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='Type a message']")))
                             elif self.chosen_language.get() == "ar":
-                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-label='اكتب رسالة']")))
+                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='اكتب رسالة']")))
                             break
                         except TimeoutException:
                             retries += 1
@@ -217,25 +285,43 @@ class WhatsAppAutomation:
 
                     if not message_box:
                         self.update_text_area(f"Failed to find message box for {phone_number} after retries.")
-                        sheet_unsent.append([phone_number, message, "Failed"])  # Log unsent message
+                        unsent_row += 1
                         continue
 
-                    cleaned_message = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\xff]', '', message)
-                    pyperclip.copy(cleaned_message)
-                    message_box.send_keys(Keys.CONTROL, 'v')
-                    message_box.send_keys(Keys.ENTER)
+                    if self.send_mode.get() == "message":
+                        cleaned_message = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\xff]', '', message)
+                        pyperclip.copy(cleaned_message)
+                        message_box.send_keys(Keys.CONTROL, 'v')
+                        message_box.send_keys(Keys.ENTER)
+                    else:
+                        if self.photo_path:
+                            self.copy_image_to_clipboard(self.photo_path)
+                            message_box.send_keys(Keys.CONTROL, 'v')
+                            message_box.send_keys(Keys.ENTER)
+                            try:
+                                if self.chosen_language.get() == "en":
+                                    message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='add caption']")))
+                                elif self.chosen_language.get() == "ar":
+                                    message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='إضافة شرح']")))
+                            except TimeoutException:
+                                    x+=1
+                                    continue
+                            message_box.send_keys(Keys.ENTER)
+                        else:
+                            self.update_info_var(f"No photo chosen for {phone_number}")
+                            self.update_text_area(f"No photo chosen for {phone_number}")
+                            continue
 
                     status = self.check_message_status()
                     sheet_sent.append([phone_number, message, status])
-                    self.update_text_area(f"Message to {phone_number} {status}.")
+                    self.update_text_area(f"Message/photo to {phone_number} {status}.")
 
                 except (NoSuchElementException, TimeoutException, WebDriverException) as e:
                     error_msg = f"Error for {phone_number}: {str(e)}"
                     self.update_info_var(f"Error for {phone_number}")
                     self.update_text_area(error_msg)
-                    sheet_unsent.append([phone_number, message, "Failed"])  # Log unsent message
 
-                time.sleep(2)  # Small delay between messages
+                time.sleep(2)
 
                 progress_value = (idx / total_rows) * 100
                 self.update_progress(progress_value)
@@ -244,9 +330,7 @@ class WhatsAppAutomation:
                 estimated_total_time = (elapsed_time / idx) * total_rows
                 remaining_time = estimated_total_time - elapsed_time
                 self.time_var.set(f"Estimated Time Remaining: {str(remaining_time).split('.')[0]}")
-
                 wb_sent.save("sent_messages.xlsx")
-                wb_unsent.save("unsent_messages.xlsx")  # Save unsent messages
 
         except Exception as e:
             self.update_info_var(f"Error: {str(e)}")
@@ -303,7 +387,6 @@ class WhatsAppAutomation:
         self.stop_thread = True
         self.update_info_var("Stopping...")
         self.update_text_area("Attempting to stop the message sending process...")
-
 
 if __name__ == "__main__":
     root = tk.Tk()
