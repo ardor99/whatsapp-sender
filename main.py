@@ -1,3 +1,8 @@
+import platform
+import subprocess
+from PIL import Image
+from io import BytesIO
+import win32clipboard
 import openpyxl
 import re
 import pyperclip
@@ -122,9 +127,46 @@ class WhatsAppAutomation:
             self.update_text_area("No photo chosen.")
 
     def copy_image_to_clipboard(self, image_path):
-        image = Image.open(image_path)
-        output = ImageGrab.grab(image_path)
-        output.show()
+        system_platform = platform.system()
+
+        if system_platform == "Windows":
+            # Windows method using win32clipboard
+            import win32clipboard
+            image = Image.open(image_path)
+            output = BytesIO()
+            image.convert("RGB").save(output, "BMP")
+            data = output.getvalue()[14:]  # BMP format expects to skip first 14 bytes
+            output.close()
+
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+            win32clipboard.CloseClipboard()
+
+        elif system_platform == "Linux":
+            # Linux method using xclip
+            image = Image.open(image_path)
+            output = BytesIO()
+            image.save(output, "PNG")  # Save image in PNG format
+            output.seek(0)
+
+            process = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', 'image/png'], stdin=subprocess.PIPE)
+            process.communicate(input=output.read())
+
+        elif system_platform == "Darwin":
+            # macOS method using pbcopy
+            image = Image.open(image_path)
+            output = BytesIO()
+            image.save(output, "PNG")
+            output.seek(0)
+
+            process = subprocess.Popen(['osascript', '-e', 'set the clipboard to (read (POSIX file "{}") as JPEG picture)'.format(image_path)],
+                                    stdin=subprocess.PIPE)
+            process.communicate(input=output.read())
+
+        else:
+            raise NotImplementedError(f"Clipboard copy is not implemented for {system_platform}.")
+        
 
     def update_progress(self, value):
         self.progress["value"] = value
@@ -236,9 +278,9 @@ class WhatsAppAutomation:
                     while retries < 3:
                         try:
                             if self.chosen_language.get() == "en":
-                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-label='Type a message']")))
+                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='Type a message']")))
                             elif self.chosen_language.get() == "ar":
-                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-label='اكتب رسالة']")))
+                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='اكتب رسالة']")))
                             break
                         except TimeoutException:
                             retries += 1
@@ -260,6 +302,15 @@ class WhatsAppAutomation:
                         if self.photo_path:
                             self.copy_image_to_clipboard(self.photo_path)
                             message_box.send_keys(Keys.CONTROL, 'v')
+                            message_box.send_keys(Keys.ENTER)
+                            try:
+                                if self.chosen_language.get() == "en":
+                                    message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='add caption']")))
+                                elif self.chosen_language.get() == "ar":
+                                    message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='إضافة شرح']")))
+                            except TimeoutException:
+                                    x+=1
+                                    continue
                             message_box.send_keys(Keys.ENTER)
                         else:
                             self.update_info_var(f"No photo chosen for {phone_number}")
