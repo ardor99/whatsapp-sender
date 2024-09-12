@@ -1,3 +1,8 @@
+import platform
+import subprocess
+from PIL import Image
+from io import BytesIO
+import win32clipboard
 import openpyxl
 import re
 import pyperclip
@@ -14,16 +19,17 @@ from selenium.webdriver.common.keys import Keys
 import time
 from selenium.webdriver.chrome.options import Options
 import os
-from datetime import datetime, timedelta
-
+import shutil
+from PIL import ImageGrab, Image
+from datetime import datetime
 
 class WhatsAppAutomation:
 
     def __init__(self, root):
         self.root = root
         self.root.title("WhatsApp Automation")
-        self.root.geometry("600x400")  # Adjust window size
-        self.root.resizable(True, True)  # Allow resizing
+        self.root.geometry("600x500")
+        self.root.resizable(True, True)
 
         self.init_gui()
 
@@ -31,32 +37,29 @@ class WhatsAppAutomation:
         self.wait = None
         self.filepath = ''
         self.webdriver_path = ''
+        self.photo_path = ''
         self.stop_thread = False
         self.pause_thread = False
 
     def init_gui(self):
-        # Main Frame for Padding
         main_frame = tk.Frame(self.root, padx=10, pady=10)
         main_frame.pack(fill="both", expand=True)
 
-        # Add Header Label
         header = tk.Label(main_frame, text="WhatsApp Automation", font=("Arial", 18, "bold"), pady=10)
         header.pack()
 
-        # WebDriver Path Button
         btn_webdriver = tk.Button(main_frame, text="Set WebDriver Path", command=self.set_webdriver_path, padx=10, pady=5)
         btn_webdriver.pack(pady=5)
 
-        # Login Button
         btn_login = tk.Button(main_frame, text="Login", command=self.login, padx=10, pady=5)
         btn_login.pack(pady=5)
 
-        # Choose File Button
-        btn_choose_file = tk.Button(main_frame, text="Choose File", command=self.choose_file, padx=10, pady=5)
+        btn_choose_file = tk.Button(main_frame, text="Choose Excel File", command=self.choose_file, padx=10, pady=5)
         btn_choose_file.pack(pady=5)
 
-        # Language Radio Buttons
-        self.chosen_language = tk.StringVar(value="en")  # default to English
+        self.chosen_language = tk.StringVar(value="en")
+        self.send_mode = tk.StringVar(value="message")
+
         lang_frame = tk.Frame(main_frame)
         lang_frame.pack(pady=5)
         lang_en = tk.Radiobutton(lang_frame, text="English", variable=self.chosen_language, value="en")
@@ -64,25 +67,31 @@ class WhatsAppAutomation:
         lang_en.pack(side="left", padx=5)
         lang_ar.pack(side="right", padx=5)
 
-        # Send Button
+        mode_frame = tk.Frame(main_frame)
+        mode_frame.pack(pady=5)
+        mode_message = tk.Radiobutton(mode_frame, text="Send Message", variable=self.send_mode, value="message", command=self.toggle_photo_options)
+        mode_photo = tk.Radiobutton(mode_frame, text="Send Photo", variable=self.send_mode, value="photo", command=self.toggle_photo_options)
+        mode_message.pack(side="left", padx=5)
+        mode_photo.pack(side="right", padx=5)
+
+        self.btn_choose_photo = tk.Button(main_frame, text="Choose Photo", command=self.choose_photo, padx=10, pady=5)
+        self.btn_choose_photo.pack(pady=5)
+        self.btn_choose_photo.pack_forget()
+
         btn_send = tk.Button(main_frame, text="Send", command=lambda: threading.Thread(target=self.send_messages).start(), padx=10, pady=5, bg="green", fg="white")
         btn_send.pack(pady=5)
 
-        # Pause Button
         btn_pause = tk.Button(main_frame, text="Pause", command=self.pause_messages, padx=10, pady=5, bg="orange", fg="white")
         btn_pause.pack(pady=5)
 
-        # Stop Button
         btn_stop = tk.Button(main_frame, text="Stop", command=self.stop_messages, padx=10, pady=5, bg="red", fg="white")
         btn_stop.pack(pady=5)
 
-        # Status Label
         self.info_var = tk.StringVar()
         self.info_var.set("Status: Waiting...")
         lbl_info = tk.Label(main_frame, textvariable=self.info_var, pady=10, font=("Arial", 12))
         lbl_info.pack()
 
-        # Text Area with Scrollbar for Logs
         log_frame = tk.Frame(main_frame)
         log_frame.pack(fill="both", expand=True)
 
@@ -92,37 +101,85 @@ class WhatsAppAutomation:
         self.text_area.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
-        # Progress Bar
         self.progress = ttk.Progressbar(main_frame, orient="horizontal", mode="determinate", length=500)
         self.progress.pack(pady=10)
 
-        # Time Remaining Label
         self.time_var = tk.StringVar()
         self.time_var.set("Estimated Time Remaining: --:--")
         lbl_time = tk.Label(main_frame, textvariable=self.time_var, pady=10, font=("Arial", 12))
         lbl_time.pack()
 
+    def toggle_photo_options(self):
+        if self.send_mode.get() == "photo":
+            self.btn_choose_photo.pack(pady=5)
+        else:
+            self.btn_choose_photo.pack_forget()
+
+    def choose_photo(self):
+        self.photo_path = filedialog.askopenfilename(title="Select Photo", filetypes=[("Image files", "*.jpg;*.jpeg;*.png"), ("All files", "*.*")])
+        if self.photo_path:
+            target_path = os.path.join(os.getcwd(), os.path.basename(self.photo_path))
+            shutil.copy(self.photo_path, target_path)
+            self.photo_path = target_path
+            self.update_text_area(f"Photo chosen: {self.photo_path}")
+        else:
+            self.update_info_var("No photo chosen.")
+            self.update_text_area("No photo chosen.")
+
+    def copy_image_to_clipboard(self, image_path):
+        system_platform = platform.system()
+
+        if system_platform == "Windows":
+            image = Image.open(image_path)
+            output = BytesIO()
+            image.convert("RGB").save(output, "BMP")
+            data = output.getvalue()[14:]  # BMP format expects to skip first 14 bytes
+            output.close()
+
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+            win32clipboard.CloseClipboard()
+
+        elif system_platform == "Linux":
+            image = Image.open(image_path)
+            output = BytesIO()
+            image.save(output, "PNG")
+            output.seek(0)
+
+            process = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', 'image/png'], stdin=subprocess.PIPE)
+            process.communicate(input=output.read())
+
+        elif system_platform == "Darwin":
+            image = Image.open(image_path)
+            output = BytesIO()
+            image.save(output, "PNG")
+            output.seek(0)
+
+            process = subprocess.Popen(['osascript', '-e', 'set the clipboard to (read (POSIX file "{}") as JPEG picture)'.format(image_path)],
+                                    stdin=subprocess.PIPE)
+            process.communicate(input=output.read())
+
+        else:
+            raise NotImplementedError(f"Clipboard copy is not implemented for {system_platform}.")
+
     def update_progress(self, value):
         self.progress["value"] = value
-        self.root.update_idletasks()  # Ensure progress bar updates in real-time
+        self.root.update_idletasks()
 
     def update_text_area(self, message):
-        """ Update the text area and log to file. """
         self.text_area.insert(tk.END, message + "\n")
         self.text_area.see(tk.END)
         with open("log.txt", "a") as log_file:
             log_file.write(f"{time.ctime()}: {message}\n")
 
     def _safe_update_text_area(self, message):
-        """ Safely update the text area in the main thread. """
         self.root.after(0, lambda: self.update_text_area(message))
 
     def update_info_var(self, message):
-        """ Thread-safe update to info_var. """
         self.root.after(0, self._safe_update_info_var, message)
 
     def _safe_update_info_var(self, message):
-        """ Safely update the info_var in the main thread. """
         self.info_var.set(message)
 
     def set_webdriver_path(self):
@@ -147,7 +204,7 @@ class WhatsAppAutomation:
         try:
             service = webdriver.chrome.service.Service(self.webdriver_path)
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
-            self.wait = WebDriverWait(self.driver, 10)  # Initialize WebDriverWait after driver creation
+            self.wait = WebDriverWait(self.driver, 10)
         except WebDriverException as e:
             self.update_info_var(f"Failed to launch WebDriver: {str(e)}")
             self.update_text_area(f"Error launching WebDriver: {str(e)}")
@@ -172,7 +229,6 @@ class WhatsAppAutomation:
 
     def send_messages(self):
         self.stop_thread = False
-        self.pause_thread = False
 
         if not self.driver:
             self.update_info_var("Please login first!")
@@ -189,40 +245,37 @@ class WhatsAppAutomation:
         try:
             wb = openpyxl.load_workbook(self.filepath)
             sheet = wb.active
-
             wb_sent = openpyxl.Workbook()
             sheet_sent = wb_sent.active
             sheet_sent.append(["Phone Number", "Message", "Status"])
 
             unsent_row = 2
-            total_rows = sheet.max_row - 1  # Total messages to be sent
+            total_rows = sheet.max_row - 1
             start_time = datetime.now()
 
             for idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=1):
                 if self.stop_thread:
                     self.update_text_area("Stopping the message sending process...")
                     break
-
                 while self.pause_thread:
                     self.update_info_var("Status: Paused. Click Resume to continue.")
                     time.sleep(1)
 
                 phone_number, message = row
                 phone_number = str(phone_number)
-                message = str(message)
 
                 try:
                     self.driver.get(f"https://web.whatsapp.com/send?phone={phone_number}")
-                    self.update_text_area(f"Attempting to send message to {phone_number}...")
+                    self.update_text_area(f"Attempting to send to {phone_number}...")
 
                     retries = 0
                     message_box = None
                     while retries < 3:
                         try:
                             if self.chosen_language.get() == "en":
-                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-label='Type a message']")))
+                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='Type a message']")))
                             elif self.chosen_language.get() == "ar":
-                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-label='اكتب رسالة']")))
+                                message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='اكتب رسالة']")))
                             break
                         except TimeoutException:
                             retries += 1
@@ -235,33 +288,48 @@ class WhatsAppAutomation:
                         unsent_row += 1
                         continue
 
-                    cleaned_message = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\xff]', '', message)
-                    pyperclip.copy(cleaned_message)
-                    message_box.send_keys(Keys.CONTROL, 'v')
-                    message_box.send_keys(Keys.ENTER)
+                    if self.send_mode.get() == "message":
+                        cleaned_message = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\xff]', '', message)
+                        pyperclip.copy(cleaned_message)
+                        message_box.send_keys(Keys.CONTROL, 'v')
+                        message_box.send_keys(Keys.ENTER)
+                    else:
+                        if self.photo_path:
+                            self.copy_image_to_clipboard(self.photo_path)
+                            message_box.send_keys(Keys.CONTROL, 'v')
+                            message_box.send_keys(Keys.ENTER)
+                            try:
+                                if self.chosen_language.get() == "en":
+                                    message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='add caption']")))
+                                elif self.chosen_language.get() == "ar":
+                                    message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='إضافة شرح']")))
+                            except TimeoutException:
+                                    x+=1
+                                    continue
+                            message_box.send_keys(Keys.ENTER)
+                        else:
+                            self.update_info_var(f"No photo chosen for {phone_number}")
+                            self.update_text_area(f"No photo chosen for {phone_number}")
+                            continue
 
                     status = self.check_message_status()
                     sheet_sent.append([phone_number, message, status])
-                    self.update_text_area(f"Message to {phone_number} {status}.")
+                    self.update_text_area(f"Message/photo to {phone_number} {status}.")
 
                 except (NoSuchElementException, TimeoutException, WebDriverException) as e:
                     error_msg = f"Error for {phone_number}: {str(e)}"
                     self.update_info_var(f"Error for {phone_number}")
                     self.update_text_area(error_msg)
-                    unsent_row += 1
 
-                time.sleep(2)  # Small delay between messages
+                time.sleep(2)
 
-                # Update progress after each message
                 progress_value = (idx / total_rows) * 100
                 self.update_progress(progress_value)
 
-                # Calculate and update estimated time remaining
                 elapsed_time = datetime.now() - start_time
                 estimated_total_time = (elapsed_time / idx) * total_rows
                 remaining_time = estimated_total_time - elapsed_time
                 self.time_var.set(f"Estimated Time Remaining: {str(remaining_time).split('.')[0]}")
-
                 wb_sent.save("sent_messages.xlsx")
 
         except Exception as e:
@@ -273,14 +341,12 @@ class WhatsAppAutomation:
             self.update_text_area("Finished sending messages.")
 
     def check_message_status(self):
-        # Step 1: Check if the message is in the 'pending' (clock) state (msg-time)
         try:
             self.wait.until(EC.presence_of_element_located((By.XPATH, "//span[@data-icon='msg-time']")))
             self.update_text_area("Message is pending (msg-time). Waiting for final status...")
         except TimeoutException:
-            pass  # Message is not pending; move on to check final status
+            pass
 
-        # Step 2: Wait for the msg-time icon to disappear (indicating the message has been sent)
         try:
             self.wait.until_not(EC.presence_of_element_located((By.XPATH, "//span[@data-icon='msg-time']")))
             self.update_text_area("Message is no longer pending (msg-time disappeared). Checking final status...")
@@ -288,27 +354,25 @@ class WhatsAppAutomation:
             self.update_text_area("Message remained in pending state for too long. Assuming not sent.")
             return "Not Sent"
 
-        # Step 3: Check for final status (Sent, Delivered, Read)
         icons = [
-            ("//span[@data-icon='msg-check']", "Sent"),  # Single check mark
-            ("//span[@data-icon='msg-dblcheck']", "Delivered"),  # Double check mark (gray)
-            ("//span[@data-icon='msg-dblcheck-ack']", "Read")  # Blue double check marks
+            ("//span[@data-icon='msg-check']", "Sent"),
+            ("//span[@data-icon='msg-dblcheck']", "Delivered"),
+            ("//span[@data-icon='msg-dblcheck-ack']", "Read")
         ]
 
         retries = 0
-        while retries < 5:  # Retry up to 5 times to catch a final status
+        while retries < 5:
             for icon, state in icons:
                 try:
                     self.wait.until(EC.presence_of_element_located((By.XPATH, icon)))
                     self.update_text_area(f"Message status updated to: {state}")
                     return state
                 except TimeoutException:
-                    continue  # Try the next icon if this one isn't found
+                    continue
 
             retries += 1
-            time.sleep(2)  # Wait for 2 seconds before re-checking the status
+            time.sleep(2)
 
-        # If no final state is found after retries, return 'Not Sent'
         self.update_text_area("No final status found after retries. Returning 'Not Sent'.")
         return "Not Sent"
 
@@ -323,7 +387,6 @@ class WhatsAppAutomation:
         self.stop_thread = True
         self.update_info_var("Stopping...")
         self.update_text_area("Attempting to stop the message sending process...")
-
 
 if __name__ == "__main__":
     root = tk.Tk()
