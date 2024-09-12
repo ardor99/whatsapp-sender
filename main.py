@@ -41,6 +41,7 @@ class WhatsAppAutomation:
         self.photo_path = ''
         self.stop_thread = False
         self.pause_thread = False
+        self.process_thread = None  # For concurrency management
 
     def init_gui(self):
         main_frame = tk.Frame(self.root, padx=10, pady=10)
@@ -79,11 +80,11 @@ class WhatsAppAutomation:
         self.btn_choose_photo.pack(pady=5)
         self.btn_choose_photo.pack_forget()
 
-        btn_send = tk.Button(main_frame, text="Send", command=lambda: threading.Thread(target=self.send_messages).start(), padx=10, pady=5, bg="green", fg="white")
+        btn_send = tk.Button(main_frame, text="Send", command=self.start_process, padx=10, pady=5, bg="green", fg="white")
         btn_send.pack(pady=5)
 
-        btn_pause = tk.Button(main_frame, text="Pause", command=self.pause_messages, padx=10, pady=5, bg="orange", fg="white")
-        btn_pause.pack(pady=5)
+        self.btn_pause = tk.Button(main_frame, text="Pause", command=self.pause_messages, padx=10, pady=5, bg="orange", fg="white")
+        self.btn_pause.pack(pady=5)
 
         btn_stop = tk.Button(main_frame, text="Stop", command=self.stop_messages, padx=10, pady=5, bg="red", fg="white")
         btn_stop.pack(pady=5)
@@ -164,6 +165,75 @@ class WhatsAppAutomation:
         else:
             raise NotImplementedError(f"Clipboard copy is not implemented for {system_platform}.")
 
+    def start_process(self):
+        """Start the message sending process in a separate thread for concurrency management."""
+        if not self.process_thread or not self.process_thread.is_alive():
+            self.process_thread = threading.Thread(target=self.send_messages)
+            self.process_thread.start()
+
+    def pause_messages(self):
+        self.pause_thread = not self.pause_thread
+        if self.pause_thread:
+            self.update_info_var("Paused...")
+            self.btn_pause.config(text="Resume", bg="blue")  # Update button to "Resume"
+        else:
+            self.update_info_var("Resuming...")
+            self.btn_pause.config(text="Pause", bg="orange")  # Revert button to "Pause"
+
+    def stop_messages(self):
+        """Stop the message sending process."""
+        self.stop_thread = True
+        self.update_info_var("Stopping...")
+        self.update_text_area("Attempting to stop the message sending process...")
+        if self.process_thread and self.process_thread.is_alive():
+            self.process_thread.join()  # Ensure the thread is terminated correctly
+        self.update_info_var("Process Stopped.")
+
+    def set_webdriver_path(self):
+        self.webdriver_path = filedialog.askopenfilename(title="Select WebDriver", filetypes=[("Executable files", "*.exe"), ("All files", "*.*")])
+        if self.webdriver_path and os.path.isfile(self.webdriver_path):
+            self.update_info_var(f"WebDriver set to: {self.webdriver_path}")
+            self.update_text_area(f"WebDriver set to: {self.webdriver_path}")
+        else:
+            self.update_info_var("Invalid WebDriver path!")
+            self.update_text_area("Invalid WebDriver path!")
+
+    def login(self):
+        if not self.webdriver_path:
+            self.update_info_var("Please select WebDriver path first!")
+            self.update_text_area("Please select WebDriver path first!")
+            return
+
+        chrome_options = Options()
+        data_dir = os.path.join(os.getcwd(), 'whatsapp_session')
+        chrome_options.add_argument(f"--user-data-dir={data_dir}")
+
+        try:
+            service = webdriver.chrome.service.Service(self.webdriver_path)
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            self.wait = WebDriverWait(self.driver, 10)
+        except WebDriverException as e:
+            self.update_info_var(f"Failed to launch WebDriver: {str(e)}")
+            self.update_text_area(f"Error launching WebDriver: {str(e)}")
+            return
+
+        try:
+            self.driver.get("https://web.whatsapp.com/")
+            self.update_info_var("Status: Please login to WhatsApp...")
+            self.update_text_area("Opened WhatsApp Web. Please login.")
+        except Exception as e:
+            self.update_info_var(f"Failed to open WhatsApp Web: {str(e)}")
+            self.update_text_area(f"Error opening WhatsApp Web: {str(e)}")
+
+    def choose_file(self):
+        self.filepath = filedialog.askopenfilename(title="Select Excel File", filetypes=[("Excel files", "*.xlsx")])
+        if self.filepath:
+            self.update_info_var(f"File chosen: {self.filepath}")
+            self.update_text_area(f"Chosen Excel File: {self.filepath}")
+        else:
+            self.update_info_var("No file chosen.")
+            self.update_text_area("No file chosen.")
+
     def update_progress(self, value):
         self.progress["value"] = value
         self.root.update_idletasks()
@@ -182,6 +252,9 @@ class WhatsAppAutomation:
 
     def _safe_update_info_var(self, message):
         self.info_var.set(message)
+
+    # All send_messages and unsent_messages related code remains unchanged
+
 
     def set_webdriver_path(self):
         self.webdriver_path = filedialog.askopenfilename(title="Select WebDriver", filetypes=[("Executable files", "*.exe"), ("All files", "*.*")])
@@ -295,6 +368,7 @@ class WhatsAppAutomation:
                     if not message_box:
                         self.update_text_area(f"Failed to find message box for {phone_number} after retries.")
                         unsent_row += 1
+                        wb_unsent.save("unsent_messages.xlsx")  # Save after each unsent message
                         continue
 
                     if self.send_mode.get() == "message":
@@ -313,29 +387,39 @@ class WhatsAppAutomation:
                                 elif self.chosen_language.get() == "ar":
                                     message_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@aria-placeholder='إضافة شرح']")))
                             except TimeoutException:
-                                    x+=1
+                                    retries += 1
                                     continue
                             message_box.send_keys(Keys.ENTER)
                         else:
                             self.update_info_var(f"No photo chosen for {phone_number}")
                             self.update_text_area(f"No photo chosen for {phone_number}")
                             unsent_row += 1
+                            sheet_unsent.append([phone_number, message])  # Add unsent message
+                            wb_unsent.save("unsent_messages.xlsx")  # Save after each unsent message
                             continue
 
+                    # Check message status
                     status = self.check_message_status()
                     self.update_text_area(f"Message/photo to {phone_number} {status}.")
+                    
+                    # Update sent and unsent logs accordingly
                     if status == "Not Sent":
                         unsent_row += 1
                     else:
-                        sheet_sent.append([phone_number, message, status])
+                        sheet_sent.append([phone_number, message, status])  # Add sent message
                         sheet_unsent.delete_rows(unsent_row)
 
+
+                    # Save both workbooks after each iteration
+                    wb_sent.save("sent_messages.xlsx")
+                    wb_unsent.save("unsent_messages.xlsx")
 
                 except (NoSuchElementException, TimeoutException, WebDriverException) as e:
                     error_msg = f"Error for {phone_number}: {str(e)}"
                     self.update_info_var(f"Error for {phone_number}")
                     self.update_text_area(error_msg)
                     unsent_row += 1
+                    wb_unsent.save("unsent_messages.xlsx")  # Save after each unsent message
 
                 time.sleep(2)
 
@@ -347,9 +431,6 @@ class WhatsAppAutomation:
                 remaining_time = estimated_total_time - elapsed_time
                 self.time_var.set(f"Estimated Time Remaining: {str(remaining_time).split('.')[0]}")
 
-            wb_sent.save("sent_messages.xlsx")
-            wb_unsent.save("unsent_messages.xlsx")
-
         except Exception as e:
             self.update_info_var(f"Error: {str(e)}")
             self.update_text_area(f"Error during message sending process: {str(e)}")
@@ -357,6 +438,11 @@ class WhatsAppAutomation:
             self.driver.quit()
             self.update_info_var("Status: Done sending messages!")
             self.update_text_area("Finished sending messages.")
+
+
+
+
+
 
     def check_message_status(self):
         try:
