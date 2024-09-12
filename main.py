@@ -23,6 +23,7 @@ import shutil
 from PIL import ImageGrab, Image
 from datetime import datetime
 
+
 class WhatsAppAutomation:
 
     def __init__(self, root):
@@ -133,7 +134,7 @@ class WhatsAppAutomation:
             image = Image.open(image_path)
             output = BytesIO()
             image.convert("RGB").save(output, "BMP")
-            data = output.getvalue()[14:]  # BMP format expects to skip first 14 bytes
+            data = output.getvalue()[14:]
             output.close()
 
             win32clipboard.OpenClipboard()
@@ -245,9 +246,15 @@ class WhatsAppAutomation:
         try:
             wb = openpyxl.load_workbook(self.filepath)
             sheet = wb.active
+
+            # Workbooks for sent and unsent messages
             wb_sent = openpyxl.Workbook()
             sheet_sent = wb_sent.active
             sheet_sent.append(["Phone Number", "Message", "Status"])
+
+            wb_unsent = openpyxl.Workbook()
+            sheet_unsent = wb_unsent.active
+            sheet_unsent.append(["Phone Number", "Message"])
 
             unsent_row = 2
             total_rows = sheet.max_row - 1
@@ -263,6 +270,7 @@ class WhatsAppAutomation:
 
                 phone_number, message = row
                 phone_number = str(phone_number)
+                message = str(message)
 
                 try:
                     self.driver.get(f"https://web.whatsapp.com/send?phone={phone_number}")
@@ -285,6 +293,7 @@ class WhatsAppAutomation:
 
                     if not message_box:
                         self.update_text_area(f"Failed to find message box for {phone_number} after retries.")
+                        sheet_unsent.delete_rows(unsent_row)
                         unsent_row += 1
                         continue
 
@@ -310,16 +319,24 @@ class WhatsAppAutomation:
                         else:
                             self.update_info_var(f"No photo chosen for {phone_number}")
                             self.update_text_area(f"No photo chosen for {phone_number}")
+                            sheet_unsent.delete_rows(unsent_row)
+                            unsent_row += 1
                             continue
 
                     status = self.check_message_status()
-                    sheet_sent.append([phone_number, message, status])
                     self.update_text_area(f"Message/photo to {phone_number} {status}.")
+                    if status == "Not Sent":
+                        sheet_unsent.delete_rows(unsent_row)
+                        unsent_row += 1
+                    else:
+                        sheet_sent.append([phone_number, message, status])
 
                 except (NoSuchElementException, TimeoutException, WebDriverException) as e:
                     error_msg = f"Error for {phone_number}: {str(e)}"
                     self.update_info_var(f"Error for {phone_number}")
                     self.update_text_area(error_msg)
+                    sheet_unsent.delete_rows(unsent_row)
+                    unsent_row += 1
 
                 time.sleep(2)
 
@@ -330,7 +347,9 @@ class WhatsAppAutomation:
                 estimated_total_time = (elapsed_time / idx) * total_rows
                 remaining_time = estimated_total_time - elapsed_time
                 self.time_var.set(f"Estimated Time Remaining: {str(remaining_time).split('.')[0]}")
-                wb_sent.save("sent_messages.xlsx")
+
+            wb_sent.save("sent_messages.xlsx")
+            wb_unsent.save("unsent_messages.xlsx")
 
         except Exception as e:
             self.update_info_var(f"Error: {str(e)}")
@@ -387,6 +406,7 @@ class WhatsAppAutomation:
         self.stop_thread = True
         self.update_info_var("Stopping...")
         self.update_text_area("Attempting to stop the message sending process...")
+
 
 if __name__ == "__main__":
     root = tk.Tk()
