@@ -254,7 +254,8 @@ class WhatsAppAutomation:
 
             wb_unsent = openpyxl.Workbook()
             sheet_unsent = wb_unsent.active
-            sheet_unsent.append(["Phone Number", "Message"])
+            for row in sheet.iter_rows(values_only=True):
+                sheet_unsent.append(row)
 
             unsent_row = 2
             total_rows = sheet.max_row - 1
@@ -293,7 +294,6 @@ class WhatsAppAutomation:
 
                     if not message_box:
                         self.update_text_area(f"Failed to find message box for {phone_number} after retries.")
-                        sheet_unsent.delete_rows(unsent_row)
                         unsent_row += 1
                         continue
 
@@ -319,23 +319,22 @@ class WhatsAppAutomation:
                         else:
                             self.update_info_var(f"No photo chosen for {phone_number}")
                             self.update_text_area(f"No photo chosen for {phone_number}")
-                            sheet_unsent.delete_rows(unsent_row)
                             unsent_row += 1
                             continue
 
                     status = self.check_message_status()
                     self.update_text_area(f"Message/photo to {phone_number} {status}.")
                     if status == "Not Sent":
-                        sheet_unsent.delete_rows(unsent_row)
                         unsent_row += 1
                     else:
                         sheet_sent.append([phone_number, message, status])
+                        sheet_unsent.delete_rows(unsent_row)
+
 
                 except (NoSuchElementException, TimeoutException, WebDriverException) as e:
                     error_msg = f"Error for {phone_number}: {str(e)}"
                     self.update_info_var(f"Error for {phone_number}")
                     self.update_text_area(error_msg)
-                    sheet_unsent.delete_rows(unsent_row)
                     unsent_row += 1
 
                 time.sleep(2)
