@@ -445,38 +445,37 @@ class WhatsAppAutomation:
 
 
     def check_message_status(self):
-        try:
-            self.wait.until(EC.presence_of_element_located((By.XPATH, "//span[@data-icon='msg-time']")))
-            self.update_text_area("Message is pending (msg-time). Waiting for final status...")
-        except TimeoutException:
-            pass
-
-        try:
-            self.wait.until_not(EC.presence_of_element_located((By.XPATH, "//span[@data-icon='msg-time']")))
-            self.update_text_area("Message is no longer pending (msg-time disappeared). Checking final status...")
-        except TimeoutException:
-            self.update_text_area("Message remained in pending state for too long. Assuming not sent.")
-            return "Not Sent"
-
         icons = [
+            ("//span[@data-icon='msg-time']", "Pending"),
             ("//span[@data-icon='msg-check']", "Sent"),
             ("//span[@data-icon='msg-dblcheck']", "Delivered"),
             ("//span[@data-icon='msg-dblcheck-ack']", "Read")
         ]
 
         retries = 0
-        while retries < 5:
+        max_retries = 5
+        wait_time = 2  # seconds
+
+        # Retry until we either find a status or exhaust retries
+        while retries < max_retries:
             for icon, state in icons:
                 try:
+                    # Wait for the icon to appear indicating message status
                     self.wait.until(EC.presence_of_element_located((By.XPATH, icon)))
                     self.update_text_area(f"Message status updated to: {state}")
+                    
+                    # If we reach this point, we've successfully found the status
                     return state
+
                 except TimeoutException:
-                    continue
+                    continue  # If the icon wasn't found, continue to the next one
 
+            # Increment the retry counter and sleep for a while before the next retry
             retries += 1
-            time.sleep(2)
+            self.update_text_area(f"Retrying to check message status... (Attempt {retries}/{max_retries})")
+            time.sleep(wait_time)
 
+        # If we exit the loop without finding a status, assume it wasn't sent
         self.update_text_area("No final status found after retries. Returning 'Not Sent'.")
         return "Not Sent"
 
