@@ -1,0 +1,7 @@
+/whatsapp_session
+/whatsapp_sender/__pycache__
+*.exe
+*.jpg
+*.txt
+*.xlsx
+working.py
