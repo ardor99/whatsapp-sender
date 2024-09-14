@@ -136,11 +136,11 @@ class WhatsAppModel:
             message_box.send_keys(Keys.CONTROL, 'v')
             time.sleep(1)
             caption_box = self.wait.until(EC.presence_of_element_located(
-                (By.XPATH, "//div[@data-testid='media-caption-text-input']")))
+                (By.XPATH, "//div[@aria-placeholder='إضافة شرح']")))
             pyperclip.copy(message)
             caption_box.send_keys(Keys.CONTROL, 'v')
             send_button = self.wait.until(EC.element_to_be_clickable(
-                (By.XPATH, "//span[@data-testid='send']")))
+                (By.XPATH, "//span[@data-icon='send']")))
             send_button.click()
 
             status = self.check_message_status()
